@@ -1,0 +1,13 @@
+# ローカル開発用。.dev.vars にコピーして値を入れる（本番は `wrangler secret put` で登録）
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+# スペース専用カレンダー（未設定ならカレンダー連携をスキップ）
+SPACE_CALENDAR_ID=
+GOOGLE_SA_EMAIL=
+GOOGLE_SA_PRIVATE_KEY=
+# LINE公式アカウント（Messaging API）（未設定なら通知をスキップ）
+LINE_CHANNEL_SECRET=
+LINE_CHANNEL_ACCESS_TOKEN=
+# ローカルでGoogleログインを省略する場合のみ: 1
+DEV_LOGIN=
+APP_URL=http://localhost:8787

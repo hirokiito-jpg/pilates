@@ -13,7 +13,7 @@
   // 毎日 20:00 JST（前日リマインド・完了押し忘れ）／毎月1日 9:00 JST（前月の精算額）
   "triggers": { "crons": ["0 11 * * *", "0 0 1 * *"] },
   "vars": {
-    "APP_URL": "https://pilates.banso-club.com",
+    "APP_URL": "https://banso-pilates.hiroki-ito.workers.dev",
     "ADMIN_EMAIL": "hiroki.ito@banso-club.com"
   }
 }

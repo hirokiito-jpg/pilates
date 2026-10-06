@@ -25,12 +25,12 @@
 
 ## セットアップ手順
 
-### 1. Cloudflare
-1. Cloudflare アカウントを作成する。テスト段階は無料の `*.workers.dev` のURLで動かせる。`pilates.banso-club.com` で公開するときは、`banso-club.com` のネームサーバーを Cloudflare に移す（無料プランでは、サブドメインだけを CNAME で向ける方式は使えない）。移す前に、メール（MX）などの既存の DNS レコードが Cloudflare 側に引き継がれているか必ず確認する
-2. `npm install`
-3. `npx wrangler login`
-4. `npx wrangler d1 create pilates` → 表示された `database_id` を `wrangler.jsonc` に貼る
-5. `npm run db:migrate:remote`
+### 1. Cloudflare（GitHub 連携で自動デプロイ）
+1. Cloudflare アカウントを作成する
+2. 「ストレージとデータベース」→「D1 SQLデータベース」で `pilates` を作成し、データベースIDを `wrangler.jsonc` に設定する（設定済み）
+3. 「Workers & Pages」→「作成」→ GitHub リポジトリ `pilates` をインポートする。Worker 名は `banso-pilates`、デプロイコマンドは `npx wrangler deploy`
+4. 以降、GitHub に push すると自動でデプロイされる。テーブルは初回アクセス時に自動で作成される（`src/migrate.ts`）
+5. 本番ドメインで公開するときは、`banso-club.com` のネームサーバーを Cloudflare に移し、Worker にカスタムドメイン `pilates.banso-club.com` を割り当てる（無料プランでは、サブドメインだけを CNAME で向ける方式は使えない。移す前に、メール（MX）などの既存の DNS レコードが Cloudflare 側に引き継がれているか必ず確認する）
 
 ### 2. スペース専用Googleカレンダー
 1. ヒロキのGoogleアカウントで新しいカレンダー「スペース（オフィス）」を作成（追加費用なし）
@@ -50,18 +50,10 @@
 2. LINE Developers でチャネルシークレットとチャネルアクセストークン（長期）を取得
 3. Webhook URL に `https://pilates.banso-club.com/line/webhook` を設定し、Webhookをオンにする（応答メッセージはオフ推奨）
 
-### 5. シークレット登録とデプロイ
-```sh
-npx wrangler secret put GOOGLE_CLIENT_ID
-npx wrangler secret put GOOGLE_CLIENT_SECRET
-npx wrangler secret put SPACE_CALENDAR_ID
-npx wrangler secret put GOOGLE_SA_EMAIL
-npx wrangler secret put GOOGLE_SA_PRIVATE_KEY   # JSONキーの private_key（\n を含んだままでOK）
-npx wrangler secret put LINE_CHANNEL_SECRET
-npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
-npm run deploy
-```
-Cloudflare ダッシュボードで Worker にカスタムドメイン `pilates.banso-club.com` を割り当てる。
+### 5. シークレット登録
+Cloudflare ダッシュボードの Worker →「設定」→「変数とシークレット」に、次の値を「シークレット」として登録する（チャットなどには貼らない）。
+
+`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `SPACE_CALENDAR_ID` / `GOOGLE_SA_EMAIL` / `GOOGLE_SA_PRIVATE_KEY`（JSONキーの private_key。\n を含んだままでOK） / `LINE_CHANNEL_SECRET` / `LINE_CHANNEL_ACCESS_TOKEN`
 
 ### 6. 初期設定
 1. `ADMIN_EMAIL`（hiroki.ito@banso-club.com）でログイン → 自動で管理者になる
@@ -72,7 +64,6 @@ Cloudflare ダッシュボードで Worker にカスタムドメイン `pilates.
 
 ```sh
 cp .dev.vars.example .dev.vars   # DEV_LOGIN=1 にすると Google ログインなしで試せる
-npm run db:migrate:local
 npm run dev
 # http://localhost:8787/dev-login               → 管理者としてログイン
 # http://localhost:8787/dev-login?email=<登録済み> → インストラクターとしてログイン

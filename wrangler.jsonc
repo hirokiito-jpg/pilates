@@ -7,8 +7,7 @@
     {
       "binding": "DB",
       "database_name": "pilates",
-      // `npx wrangler d1 create pilates` で発行された ID に置き換える
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      "database_id": "d7d18a98-1fd9-4837-9a2e-8d92b22699c4"
     }
   ],
   // 毎日 20:00 JST（前日リマインド・完了押し忘れ）／毎月1日 9:00 JST（前月の精算額）

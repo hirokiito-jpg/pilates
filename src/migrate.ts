@@ -1,3 +1,12 @@
+// データベースのテーブル作成・変更（マイグレーション）。
+// アプリ起動時に未適用のものを自動で適用するので、Cloudflare の画面で SQL を実行する必要はない。
+// 変更を加えるときは、既存の要素は書き換えず、配列の末尾に新しいマイグレーションを追加する。
+import type { Env } from "./types";
+
+const MIGRATIONS: { name: string; sql: string }[] = [
+  {
+    name: "0001_init",
+    sql: `
 -- 日時はすべて UTC の ISO 8601 文字列（例: 2026-10-05T01:00:00.000Z）で保存する。
 -- 金額はすべて税込の円（整数）。料率は basis point（3000 = 30%）。
 
@@ -66,3 +75,48 @@ CREATE INDEX idx_bookings_slot ON bookings(slot_id);
 -- 1つの枠に有効な予約は1件だけ（1対1）
 CREATE UNIQUE INDEX idx_bookings_one_active
   ON bookings(slot_id) WHERE status IN ('reserved', 'completed', 'cancelled_charged', 'no_show');
+`,
+  },
+];
+
+/** "--" で始まるコメント行を除き、";" で文を分割する */
+export function splitStatements(sql: string): string[] {
+  return sql
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("--"))
+    .join("\n")
+    .split(";")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+let done = false;
+
+export async function migrate(env: Env) {
+  if (done) return;
+  await env.DB.prepare(
+    "CREATE TABLE IF NOT EXISTS app_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)",
+  ).run();
+  const { results } = await env.DB.prepare("SELECT name FROM app_migrations").all<{ name: string }>();
+  const applied = new Set(results.map((r) => r.name));
+  for (const m of MIGRATIONS) {
+    if (applied.has(m.name)) continue;
+    try {
+      // batch はトランザクションとして実行され、途中で失敗すれば全体が取り消される
+      await env.DB.batch([
+        ...splitStatements(m.sql).map((s) => env.DB.prepare(s)),
+        env.DB.prepare("INSERT INTO app_migrations (name, applied_at) VALUES (?, ?)").bind(
+          m.name,
+          new Date().toISOString(),
+        ),
+      ]);
+    } catch (e) {
+      // 別のリクエストが同時に適用した場合は成功扱い
+      const again = await env.DB.prepare("SELECT 1 FROM app_migrations WHERE name = ?").bind(m.name).first();
+      if (!again) throw e;
+    }
+  }
+  done = true;
+}
+
+export { MIGRATIONS };

@@ -77,3 +77,12 @@ describe("月次精算", () => {
     expect(calcSettlement([], 3000).fee).toBe(0);
   });
 });
+
+describe("マイグレーション", () => {
+  it("SQL をコメントを除いて文ごとに分割する", async () => {
+    const { MIGRATIONS, splitStatements } = await import("../src/migrate");
+    const stmts = splitStatements(MIGRATIONS[0].sql);
+    expect(stmts).toHaveLength(8);
+    expect(stmts.every((s) => /^CREATE /.test(s))).toBe(true);
+  });
+});

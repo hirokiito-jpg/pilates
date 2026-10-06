@@ -3,11 +3,18 @@ import { csrf } from "hono/csrf";
 import { authRoutes, requireLogin } from "./auth";
 import { dailyNotify, monthlyNotify } from "./cron";
 import { replyLine, verifyLineSignature } from "./line";
+import { migrate } from "./migrate";
 import { app as protectedRoutes } from "./routes";
 import type { AppEnv, Env } from "./types";
 import { Layout } from "./views/layout";
 
 const app = new Hono<AppEnv>();
+
+// 初回アクセス時にテーブルを自動作成・更新する
+app.use("*", async (c, next) => {
+  await migrate(c.env);
+  await next();
+});
 
 // LINE Webhook（署名で検証するので CSRF・ログインの対象外）
 app.post("/line/webhook", async (c) => {
@@ -65,6 +72,7 @@ app.route("/", protectedRoutes);
 export default {
   fetch: app.fetch,
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    await migrate(env);
     if (event.cron === "0 11 * * *") ctx.waitUntil(dailyNotify(env));
     if (event.cron === "0 0 1 * *") ctx.waitUntil(monthlyNotify(env));
   },

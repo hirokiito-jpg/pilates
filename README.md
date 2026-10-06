@@ -26,7 +26,7 @@
 ## セットアップ手順
 
 ### 1. Cloudflare
-1. Cloudflare アカウントを作成し、`banso-club.com` のDNSを Cloudflare で管理する（またはサブドメインだけ CNAME で向ける）
+1. Cloudflare アカウントを作成する。テスト段階は無料の `*.workers.dev` のURLで動かせる。`pilates.banso-club.com` で公開するときは、`banso-club.com` のネームサーバーを Cloudflare に移す（無料プランでは、サブドメインだけを CNAME で向ける方式は使えない）。移す前に、メール（MX）などの既存の DNS レコードが Cloudflare 側に引き継がれているか必ず確認する
 2. `npm install`
 3. `npx wrangler login`
 4. `npx wrangler d1 create pilates` → 表示された `database_id` を `wrangler.jsonc` に貼る

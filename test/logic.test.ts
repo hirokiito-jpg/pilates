@@ -86,3 +86,14 @@ describe("マイグレーション", () => {
     expect(stmts.every((s) => /^CREATE /.test(s))).toBe(true);
   });
 });
+
+describe("カレンダーエラーの説明", () => {
+  it("権限不足・ID違い・API無効を見分ける", async () => {
+    const { CalendarError, describeCalendarError } = await import("../src/gcal");
+    expect(describeCalendarError(new CalendarError(403, '{"error":{"message":"You need to have writer access to this calendar."}}')))
+      .toContain("予定の変更");
+    expect(describeCalendarError(new CalendarError(404, "Not Found"))).toContain("カレンダーID");
+    expect(describeCalendarError(new CalendarError(403, "accessNotConfigured"))).toContain("API");
+    expect(describeCalendarError(new Error("Google token error: 400"))).toContain("鍵");
+  });
+});

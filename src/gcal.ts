@@ -16,6 +16,29 @@ const b64url = (data: ArrayBuffer | Uint8Array | string) => {
   return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 };
 
+export class CalendarError extends Error {
+  constructor(public status: number, public body: string) {
+    super(`Google Calendar error: ${status} ${body}`);
+  }
+}
+
+/** 画面に出すための、原因の分かる短い説明（秘密情報は含まない） */
+export function describeCalendarError(e: unknown): string {
+  if (e instanceof CalendarError) {
+    if (e.status === 403 && /writer access|forbidden|requiredAccessLevel/i.test(e.body)) {
+      return "カレンダーの共有権限が「予定の変更」になっていません";
+    }
+    if (e.status === 404) return "カレンダーが見つかりません（カレンダーIDを確認してください）";
+    if (e.status === 403 && /accessNotConfigured|has not been used|disabled/i.test(e.body)) {
+      return "Google Calendar API が有効になっていません";
+    }
+    return `Googleカレンダーのエラー（${e.status}）`;
+  }
+  const msg = e instanceof Error ? e.message : String(e);
+  if (/Google token error/.test(msg)) return "Googleへの認証に失敗しました（サービスアカウントの鍵を確認してください）";
+  return "Googleカレンダーとの通信に失敗しました";
+}
+
 let cachedToken: { token: string; exp: number } | null = null;
 
 async function accessToken(env: Env): Promise<string> {
@@ -72,8 +95,10 @@ async function gcalFetch(env: Env, path: string, init: RequestInit = {}) {
       ...(init.headers ?? {}),
     },
   });
-  if (!res.ok && res.status !== 410 && res.status !== 404) {
-    throw new Error(`Google Calendar error: ${res.status} ${await res.text()}`);
+  // 削除済みの予定への削除・更新（404/410）は無視してよい
+  const ignorable = (res.status === 404 || res.status === 410) && init.method !== "POST";
+  if (!res.ok && !ignorable) {
+    throw new CalendarError(res.status, await res.text());
   }
   return res;
 }

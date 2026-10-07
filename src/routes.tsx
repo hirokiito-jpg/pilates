@@ -13,7 +13,7 @@ import {
   type BookingRow,
   type SlotRow,
 } from "./db";
-import { createEvent, deleteEvent, getBusy, overlaps, updateEventSummary } from "./gcal";
+import { createEvent, deleteEvent, describeCalendarError, getBusy, overlaps, updateEventSummary } from "./gcal";
 import {
   PAYMENT_METHODS,
   STATUS_LABEL,
@@ -278,11 +278,13 @@ app.post("/slots", async (c) => {
     busy = await getBusy(c.env, candidates[0].start, candidates[candidates.length - 1].end);
   } catch (e) {
     console.error(e);
-    return back(c, "/slots/new", "スペースカレンダーを確認できませんでした。時間をおいて再度お試しください", true);
+    return back(c, "/slots/new", `スペースカレンダーを確認できませんでした：${describeCalendarError(e)}`, true);
   }
 
   const created: string[] = [];
   const skipped: string[] = [];
+  const failed: string[] = [];
+  let failReason = "";
   for (const s of candidates) {
     const label = formatJstTime(s.start);
     const taken =
@@ -296,7 +298,8 @@ app.post("/slots", async (c) => {
       eventId = await createEvent(c.env, { summary: calSummary(instructor.name), start: s.start, end: s.end });
     } catch (e) {
       console.error(e);
-      skipped.push(`${label}（カレンダー書込失敗）`);
+      failed.push(label);
+      failReason = describeCalendarError(e);
       continue;
     }
     await c.env.DB.prepare(
@@ -310,6 +313,7 @@ app.post("/slots", async (c) => {
   const msg = [
     created.length ? `${created.length}枠を登録しました（${created.join("・")}）` : "登録できる枠がありませんでした",
     skipped.length ? `スペースが埋まっているためスキップ：${skipped.join("・")}` : "",
+    failed.length ? `カレンダーに書き込めませんでした：${failed.join("・")}（${failReason}）` : "",
   ]
     .filter(Boolean)
     .join("／");

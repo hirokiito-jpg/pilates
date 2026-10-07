@@ -44,6 +44,16 @@ app.post("/line/webhook", async (c) => {
   return c.text("ok");
 });
 
+// 動作確認用：各連携の設定が入っているかだけを返す（値そのものは返さない）
+app.get("/healthz", (c) =>
+  c.json({
+    ok: true,
+    google_login: !!(c.env.GOOGLE_CLIENT_ID && c.env.GOOGLE_CLIENT_SECRET),
+    space_calendar: !!(c.env.SPACE_CALENDAR_ID && c.env.GOOGLE_SA_EMAIL && c.env.GOOGLE_SA_PRIVATE_KEY),
+    line: !!(c.env.LINE_CHANNEL_SECRET && c.env.LINE_CHANNEL_ACCESS_TOKEN),
+  }),
+);
+
 app.use("*", csrf());
 
 app.get("/login", (c) => {

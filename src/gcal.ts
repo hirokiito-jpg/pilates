@@ -1,8 +1,11 @@
 // スペース専用 Google カレンダーとの連携（サービスアカウント経由）。
 // 環境変数が未設定のときは何もしない（ローカル開発・テスト用）。
+import type { CalEvent } from "./lib/conflicts";
+import { jstToDate } from "./lib/time";
 import type { Env } from "./types";
 
-type Busy = { start: Date; end: Date };
+/** このシステムが書き込んだ予定に付ける目印 */
+const APP_TAG = "banso-pilates";
 
 export function calendarEnabled(env: Env): boolean {
   return !!(env.SPACE_CALENDAR_ID && env.GOOGLE_SA_EMAIL && env.GOOGLE_SA_PRIVATE_KEY);
@@ -96,37 +99,50 @@ async function gcalFetch(env: Env, path: string, init: RequestInit = {}) {
     },
   });
   // 削除済みの予定への削除・更新（404/410）は無視してよい
-  const ignorable = (res.status === 404 || res.status === 410) && init.method !== "POST";
+  const ignorable =
+    (res.status === 404 || res.status === 410) && (init.method === "DELETE" || init.method === "PATCH");
   if (!res.ok && !ignorable) {
     throw new CalendarError(res.status, await res.text());
   }
   return res;
 }
 
-/** スペースカレンダーの埋まっている時間帯 */
-export async function getBusy(env: Env, from: Date, to: Date): Promise<Busy[]> {
-  if (!calendarEnabled(env)) return [];
-  const res = await gcalFetch(env, "/freeBusy", {
-    method: "POST",
-    body: JSON.stringify({
-      timeMin: from.toISOString(),
-      timeMax: to.toISOString(),
-      timeZone: "Asia/Tokyo",
-      items: [{ id: env.SPACE_CALENDAR_ID }],
-    }),
-  });
-  const json = (await res.json()) as {
-    calendars: Record<string, { busy?: { start: string; end: string }[]; errors?: unknown[] }>;
-  };
-  const cal = json.calendars[env.SPACE_CALENDAR_ID!];
-  if (!cal || cal.errors?.length) {
-    throw new Error(`カレンダーを参照できません（共有設定を確認してください）: ${JSON.stringify(cal?.errors)}`);
-  }
-  return (cal.busy ?? []).map((b) => ({ start: new Date(b.start), end: new Date(b.end) }));
-}
+type ApiEvent = {
+  id: string;
+  status?: string;
+  transparency?: string;
+  start?: { dateTime?: string; date?: string };
+  end?: { dateTime?: string; date?: string };
+  creator?: { email?: string };
+  extendedProperties?: { private?: Record<string, string> };
+};
 
-export function overlaps(a: { start: Date; end: Date }, b: { start: Date; end: Date }) {
-  return a.start < b.end && b.start < a.end;
+const toDate = (t?: { dateTime?: string; date?: string }) =>
+  t?.dateTime ? new Date(t.dateTime) : t?.date ? jstToDate(t.date, "00:00") : null;
+
+/** スペースカレンダーの予定一覧（「空き」に設定された予定とキャンセル済みは除く） */
+export async function listEvents(env: Env, from: Date, to: Date): Promise<CalEvent[]> {
+  if (!calendarEnabled(env)) return [];
+  const params = new URLSearchParams({
+    timeMin: from.toISOString(),
+    timeMax: to.toISOString(),
+    singleEvents: "true",
+    maxResults: "250",
+  });
+  const res = await gcalFetch(env, `${calPath(env)}?${params}`);
+  const json = (await res.json()) as { items?: ApiEvent[] };
+  const events: CalEvent[] = [];
+  for (const e of json.items ?? []) {
+    if (e.status === "cancelled" || e.transparency === "transparent") continue;
+    const start = toDate(e.start);
+    const end = toDate(e.end);
+    if (!start || !end) continue;
+    const fromApp =
+      e.extendedProperties?.private?.app === APP_TAG ||
+      (!!env.GOOGLE_SA_EMAIL && e.creator?.email === env.GOOGLE_SA_EMAIL);
+    events.push({ id: e.id, start, end, fromApp });
+  }
+  return events;
 }
 
 const calPath = (env: Env) => `/calendars/${encodeURIComponent(env.SPACE_CALENDAR_ID!)}/events`;
@@ -143,6 +159,7 @@ export async function createEvent(
       description: ev.description,
       start: { dateTime: ev.start.toISOString(), timeZone: "Asia/Tokyo" },
       end: { dateTime: ev.end.toISOString(), timeZone: "Asia/Tokyo" },
+      extendedProperties: { private: { app: APP_TAG } },
     }),
   });
   return ((await res.json()) as { id: string }).id;

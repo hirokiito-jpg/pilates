@@ -77,6 +77,12 @@ export function Layout(props: {
             </div>
           </header>
         )}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "document.addEventListener('submit',function(e){if(e.defaultPrevented)return;var b=e.target.querySelectorAll('button');setTimeout(function(){b.forEach(function(x){x.disabled=true;x.textContent='処理中…'})},0)});window.addEventListener('pageshow',function(e){if(e.persisted)location.reload()});",
+          }}
+        />
         <main>
           {props.flash && <div class={props.flash.err ? "flash err" : "flash"}>{props.flash.msg}</div>}
           {props.children}

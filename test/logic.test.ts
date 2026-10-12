@@ -97,3 +97,21 @@ describe("カレンダーエラーの説明", () => {
     expect(describeCalendarError(new Error("Google token error: 400"))).toContain("鍵");
   });
 });
+
+describe("スペースの空き判定", () => {
+  it("取り残された仮押さえは空き扱いにして片付け対象にする", async () => {
+    const { classifyConflicts } = await import("../src/lib/conflicts");
+    const slot = { start: new Date("2026-10-21T23:00:00Z"), end: new Date("2026-10-22T00:00:00Z") };
+    const ev = (id: string, fromApp: boolean, s = slot.start, e = slot.end) => ({ id, fromApp, start: s, end: e });
+
+    // システムが書いたが、どの枠にも紐づかない予定 → 片付けて登録できる
+    expect(classifyConflicts(slot, [ev("orphan", true)], new Set())).toEqual({ busy: false, orphanIds: ["orphan"] });
+    // 有効な枠に紐づく予定 → 埋まっている
+    expect(classifyConflicts(slot, [ev("live", true)], new Set(["live"])).busy).toBe(true);
+    // 人が入れた別の予定 → 埋まっている（消さない）
+    expect(classifyConflicts(slot, [ev("other", false)], new Set())).toEqual({ busy: true, orphanIds: [] });
+    // 時間が重ならない予定は関係ない
+    const later = ev("later", false, slot.end, new Date("2026-10-22T01:00:00Z"));
+    expect(classifyConflicts(slot, [later], new Set())).toEqual({ busy: false, orphanIds: [] });
+  });
+});

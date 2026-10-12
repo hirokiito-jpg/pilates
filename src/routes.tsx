@@ -13,7 +13,8 @@ import {
   type BookingRow,
   type SlotRow,
 } from "./db";
-import { createEvent, deleteEvent, describeCalendarError, getBusy, overlaps, updateEventSummary } from "./gcal";
+import { createEvent, deleteEvent, describeCalendarError, listEvents, updateEventSummary } from "./gcal";
+import { classifyConflicts, type CalEvent, type Range } from "./lib/conflicts";
 import {
   PAYMENT_METHODS,
   STATUS_LABEL,
@@ -273,42 +274,22 @@ app.post("/slots", async (c) => {
     return back(c, "/slots/new", "未来の時間で、60分以上の範囲を指定してください", true);
   }
 
-  let busy;
+  let events: CalEvent[];
   try {
-    busy = await getBusy(c.env, candidates[0].start, candidates[candidates.length - 1].end);
+    events = await listEvents(c.env, candidates[0].start, candidates[candidates.length - 1].end);
   } catch (e) {
     console.error(e);
     return back(c, "/slots/new", `スペースカレンダーを確認できませんでした：${describeCalendarError(e)}`, true);
   }
 
-  const created: string[] = [];
-  const skipped: string[] = [];
-  const failed: string[] = [];
-  let failReason = "";
-  for (const s of candidates) {
-    const label = formatJstTime(s.start);
-    const taken =
-      busy.some((b) => overlaps(s, b)) || (await overlappingSlots(c.env, s.start, s.end)).length > 0;
-    if (taken) {
-      skipped.push(label);
-      continue;
-    }
-    let eventId: string | null = null;
-    try {
-      eventId = await createEvent(c.env, { summary: calSummary(instructor.name), start: s.start, end: s.end });
-    } catch (e) {
-      console.error(e);
-      failed.push(label);
-      failReason = describeCalendarError(e);
-      continue;
-    }
-    await c.env.DB.prepare(
-      "INSERT INTO slots (instructor_id, start_at, end_at, gcal_event_id) VALUES (?, ?, ?, ?)",
-    )
-      .bind(instructorId, s.start.toISOString(), s.end.toISOString(), eventId)
-      .run();
-    created.push(label);
+  // スマホで画面を離れても処理が途中で打ち切られないよう、最後まで実行させる
+  const work = registerSlots(c.env, instructorId, instructor.name, candidates, events);
+  try {
+    c.executionCtx.waitUntil(work);
+  } catch {
+    // テストなど executionCtx がない環境では何もしない
   }
+  const { created, skipped, failed, failReason } = await work;
 
   const msg = [
     created.length ? `${created.length}枠を登録しました（${created.join("・")}）` : "登録できる枠がありませんでした",
@@ -320,12 +301,74 @@ app.post("/slots", async (c) => {
   return back(c, created.length ? "/" : "/slots/new", msg, created.length === 0);
 });
 
+/**
+ * 枠を1つずつ登録する。先にデータベースへ枠を作り、そのあとカレンダーに書き込むので、
+ * 途中で止まっても「カレンダーにだけ予定が残る」状態にはならない。
+ */
+async function registerSlots(
+  env: Env,
+  instructorId: number,
+  instructorName: string,
+  candidates: Range[],
+  events: CalEvent[],
+) {
+  const created: string[] = [];
+  const skipped: string[] = [];
+  const failed: string[] = [];
+  let failReason = "";
+
+  const { results: refs } = await env.DB.prepare(
+    "SELECT gcal_event_id FROM slots WHERE deleted_at IS NULL AND gcal_event_id IS NOT NULL",
+  ).all<{ gcal_event_id: string }>();
+  const referenced = new Set(refs.map((r) => r.gcal_event_id));
+
+  for (const s of candidates) {
+    const label = formatJstTime(s.start);
+    if ((await overlappingSlots(env, s.start, s.end)).length > 0) {
+      skipped.push(label);
+      continue;
+    }
+    const { busy, orphanIds } = classifyConflicts(s, events, referenced);
+    if (busy) {
+      skipped.push(label);
+      continue;
+    }
+
+    const slot = await env.DB.prepare(
+      "INSERT INTO slots (instructor_id, start_at, end_at) VALUES (?, ?, ?) RETURNING id",
+    )
+      .bind(instructorId, s.start.toISOString(), s.end.toISOString())
+      .first<{ id: number }>();
+
+    // 以前の登録が途中で止まって残った「仮押さえ」を片付ける
+    for (const id of orphanIds) await safeCal(deleteEvent(env, id));
+
+    try {
+      const eventId = await createEvent(env, { summary: calSummary(instructorName), start: s.start, end: s.end });
+      await env.DB.prepare("UPDATE slots SET gcal_event_id = ? WHERE id = ?").bind(eventId, slot!.id).run();
+      created.push(label);
+    } catch (e) {
+      console.error(e);
+      await env.DB.prepare("DELETE FROM slots WHERE id = ?").bind(slot!.id).run();
+      failed.push(label);
+      failReason = describeCalendarError(e);
+    }
+  }
+  return { created, skipped, failed, failReason };
+}
+
 app.post("/slots/:id/delete", async (c) => {
   const user = c.get("user");
   const slot = await getSlot(c.env, Number(c.req.param("id")));
   if (!slot || !canManage(user, slot.instructor_id)) return back(c, "/", "枠が見つかりません", true);
   if (slot.booking_id) return back(c, "/", "予約が入っている枠は削除できません。先にキャンセルしてください", true);
-  await safeCal(deleteEvent(c.env, slot.gcal_event_id));
+  try {
+    await deleteEvent(c.env, slot.gcal_event_id);
+  } catch (e) {
+    // カレンダーから消せないまま枠だけ消すと、仮押さえが残ってしまうので中止する
+    console.error(e);
+    return back(c, "/", `カレンダーから削除できませんでした（${describeCalendarError(e)}）。時間をおいて再度お試しください`, true);
+  }
   await c.env.DB.prepare("UPDATE slots SET deleted_at = ? WHERE id = ?")
     .bind(new Date().toISOString(), slot.id)
     .run();

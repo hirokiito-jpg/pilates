@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { requireAdmin } from "./auth";
 import {
+  ACTIVE_STATUSES_SQL,
   DEFAULT_MENUS,
   getBooking,
   getSlot,
@@ -526,6 +527,44 @@ app.post("/bookings/:id/revert", async (c) => {
   return back(c, safeTo, `${b.customer_name}様の予約を「予約中」に戻しました`);
 });
 
+/**
+ * 管理者専用：テストや誤登録の予約を完全に削除する（精算からも消える）。
+ * その枠にほかの有効な予約がなければ、枠とカレンダーの予定も一緒に削除する。
+ */
+app.post("/bookings/:id/purge", requireAdmin, async (c) => {
+  const to = String(c.req.query("to") ?? "/history");
+  const safeTo = to.startsWith("/") && !to.startsWith("//") ? to : "/history";
+  const b = await getBooking(c.env, Number(c.req.param("id")));
+  if (!b) return back(c, safeTo, "対象の予約が見つかりません", true);
+
+  const other = await c.env.DB.prepare(
+    `SELECT 1 FROM bookings WHERE slot_id = ? AND id <> ? AND status IN ${ACTIVE_STATUSES_SQL}`,
+  )
+    .bind(b.slot_id, b.id)
+    .first();
+  const removeSlot = !other;
+
+  if (removeSlot) {
+    try {
+      await deleteEvent(c.env, b.gcal_event_id);
+    } catch (e) {
+      console.error(e);
+      return back(c, safeTo, `カレンダーから削除できませんでした（${describeCalendarError(e)}）`, true);
+    }
+  }
+  await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM bookings WHERE id = ?").bind(b.id),
+    ...(removeSlot
+      ? [c.env.DB.prepare("UPDATE slots SET deleted_at = ? WHERE id = ?").bind(new Date().toISOString(), b.slot_id)]
+      : []),
+  ]);
+  return back(
+    c,
+    safeTo,
+    `${formatJst(new Date(b.start_at))} ${b.customer_name}様の予約を削除しました${removeSlot ? "（枠とカレンダーの予定も削除）" : ""}`,
+  );
+});
+
 // ---------- 履歴 ----------
 
 function MonthNav({ month, path }: { month: string; path: string }) {
@@ -568,6 +607,12 @@ app.get("/history", async (c) => {
               <form class="inline" method="post" action={`/bookings/${b.id}/revert?to=${encodeURIComponent(here)}`}
                 onsubmit="return confirm('「予約中」に戻しますか？（入力ミスの修正用）')">
                 <button class="ghost">予約中に戻す</button>
+              </form>
+            )}
+            {user.role === "admin" && (
+              <form class="inline" method="post" action={`/bookings/${b.id}/purge?to=${encodeURIComponent(here)}`}
+                onsubmit="return confirm('この予約を完全に削除しますか？\n（テスト・誤登録用。精算からも消え、元に戻せません）')">
+                <button class="danger">削除</button>
               </form>
             )}
           </div>
